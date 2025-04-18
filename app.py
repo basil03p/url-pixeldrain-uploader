@@ -1,117 +1,99 @@
 import os
 import json
 import threading
-import time
-from flask import Flask, render_template, request
 import requests
+from flask import Flask, render_template, request, redirect, url_for
+from urllib.parse import urlparse
+from time import time
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 
-# Lock to handle concurrent access to jobs
-jobs_lock = threading.Lock()
-
-# File where job history is stored
 JOBS_FILE = "jobs.json"
+UPLOAD_URL = "https://pixeldrain.com/api/file"
 
+jobs_lock = threading.Lock()
+active_jobs = []
+
+# Load jobs from file
 def load_jobs():
-    """Load the job history from the JSON file."""
-    if os.path.exists(JOBS_FILE):
-        with open(JOBS_FILE, "r") as file:
-            try:
-                return json.load(file)
-            except json.JSONDecodeError:
-                return []
-    else:
+    if not os.path.exists(JOBS_FILE):
         return []
+    with open(JOBS_FILE, "r") as file:
+        try:
+            return json.load(file)
+        except json.JSONDecodeError:
+            return []
 
+# Save jobs to file
 def save_jobs(jobs):
-    """Save the job history to the JSON file."""
     with open(JOBS_FILE, "w") as file:
         json.dump(jobs, file, indent=4)
 
+# Background worker
+def job_worker():
+    while True:
+        if active_jobs:
+            job = active_jobs.pop(0)
+            url = job["url"]
+            filename = urlparse(url).path.split("/")[-1] or "file"
+
+            try:
+                start = time()
+                with requests.get(url, stream=True, timeout=30) as r:
+                    r.raise_for_status()
+                    total = int(r.headers.get("Content-Length", 0))
+                    uploaded = 0
+
+                    with requests.Session() as s:
+                        with s.post(UPLOAD_URL, files={"file": (filename, r.raw)}) as upload_response:
+                            upload_response.raise_for_status()
+                            res_json = upload_response.json()
+                            job["status"] = "success ✅"
+                            job["link"] = f"https://pixeldrain.com/u/{res_json['id']}"
+
+                duration = time() - start
+                job["eta"] = f"{int(duration)}s"
+
+            except Exception as e:
+                job["status"] = f"failed ⚠️ {str(e)}"
+                job["link"] = ""
+
+            with jobs_lock:
+                jobs = load_jobs()
+                jobs.insert(0, job)
+                save_jobs(jobs)
+
+# Start background thread
+threading.Thread(target=job_worker, daemon=True).start()
+
 @app.route("/", methods=["GET"])
 def index():
-    """Render the job history page."""
-    jobs = load_jobs()
+    with jobs_lock:
+        jobs = load_jobs()
     return render_template("index.html", jobs=jobs)
 
 @app.route("/submit", methods=["POST"])
 def submit():
-    """Submit a new upload job."""
-    url = request.form["url"]
-    job = {
-        "url": url,
-        "status": "Uploading",
-        "progress": 0
-    }
+    url = request.form.get("url")
+    if url:
+        job = {
+            "url": url,
+            "status": "pending ⏳",
+            "link": "",
+            "eta": ""
+        }
+        active_jobs.append(job)
+    return redirect(url_for("index"))
 
-    # Load current jobs and append the new job
-    with jobs_lock:
-        jobs = load_jobs()
-        jobs.append(job)
-        save_jobs(jobs)
-
-    # Start the upload in a separate thread
-    threading.Thread(target=upload_file, args=(job,)).start()
-
-    return render_template("index.html", jobs=jobs)
-
-def upload_file(job):
-    """Simulate the file upload process."""
-    url = job["url"]
-    job["status"] = "Uploading"
-    
-    # Simulate a file upload and update progress
-    total_file_size = 1000  # Example: 1000 bytes total file size (you'll need to get real file size in a real scenario)
-    uploaded_size = 0
-
-    try:
-        while uploaded_size < total_file_size:
-            time.sleep(1)  # Simulate time taken for uploading a chunk
-            uploaded_size += 100  # Simulate uploading 100 bytes at a time
-            
-            # Calculate progress as a percentage
-            if total_file_size > 0:
-                job["progress"] = (uploaded_size / total_file_size) * 100
-            else:
-                job["progress"] = 0
-
-            # Update job status if completed
-            if uploaded_size >= total_file_size:
-                job["status"] = "Completed"
-                job["progress"] = 100
-
-            # Save job history to file
-            with jobs_lock:
-                jobs = load_jobs()
-                for saved_job in jobs:
-                    if saved_job["url"] == job["url"]:
-                        saved_job["status"] = job["status"]
-                        saved_job["progress"] = job["progress"]
-                save_jobs(jobs)
-                
-    except Exception as e:
-        job["status"] = f"Failed: {str(e)}"
-        job["progress"] = 0
-        with jobs_lock:
-            jobs = load_jobs()
-            for saved_job in jobs:
-                if saved_job["url"] == job["url"]:
-                    saved_job["status"] = job["status"]
-                    saved_job["progress"] = job["progress"]
-            save_jobs(jobs)
-
-@app.route("/clear", methods=["POST"])
-def clear_jobs():
-    """Clear the job history."""
+@app.route("/reset", methods=["POST"])
+def reset():
     with jobs_lock:
         save_jobs([])
-    return render_template("index.html", jobs=[])
+    return redirect(url_for("index"))
 
 if __name__ == "__main__":
-    # Ensure that the jobs.json file exists
-    if not os.path.exists(JOBS_FILE):
-        with open(JOBS_FILE, "w") as file:
-            json.dump([], file)
-
-    app.run(host="0.0.0.0", port=10000, debug=True)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, debug=True)
