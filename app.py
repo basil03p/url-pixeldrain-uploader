@@ -1,132 +1,150 @@
 import os
+import json
+import requests
 import threading
 import time
-import uuid
-import requests
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
-import json
 
-# Load environment variables (e.g., PIXELDRAIN_API_KEY)
+# Load environment variables from .env file
 load_dotenv()
 
+# Initialize Flask app
 app = Flask(__name__)
 
-# Load Pixeldrain API key from environment variable
+# Define API key and base URL for Pixeldrain
 PIXELDRAIN_API_KEY = os.getenv("PIXELDRAIN_API_KEY")
+PIXELDRAIN_UPLOAD_URL = "https://pixeldrain.com/api/file"
 
-# Path to the JSON file for job history
-JOB_HISTORY_FILE = "jobs.json"
+# Job storage (in-memory or persistent)
+jobs_file = "jobs.json"
 
-# Load job history from JSON file on startup
-def load_jobs_from_file():
-    if os.path.exists(JOB_HISTORY_FILE):
-        with open(JOB_HISTORY_FILE, "r") as f:
-            return json.load(f)
+# Load job history from jobs.json
+def load_jobs():
+    if os.path.exists(jobs_file):
+        with open(jobs_file, 'r') as file:
+            return json.load(file)
     return []
 
-# Save job history to JSON file
-def save_jobs_to_file(jobs):
-    with open(JOB_HISTORY_FILE, "w") as f:
-        json.dump(jobs, f)
+# Save job history to jobs.json
+def save_jobs(jobs):
+    with open(jobs_file, 'w') as file:
+        json.dump(jobs, file, indent=4)
 
-# Upload to Pixeldrain using API key (if available)
-def upload_to_pixeldrain(url):
-    headers = {}
-    if PIXELDRAIN_API_KEY:
-        headers["Authorization"] = f"Bearer {PIXELDRAIN_API_KEY}"
-    
-    response = requests.post(
-        "https://pixeldrain.com/api/file/fetch",
-        headers=headers,
-        data={"url": url},
-        timeout=600
-    )
-    result = response.json()
-    if result.get("success"):
-        return f"https://pixeldrain.com/u/{result['id']}"
-    else:
-        raise Exception(result)
+# Function to upload a file to Pixeldrain
+def upload_file_to_pixeldrain(job_id, url):
+    try:
+        response = requests.get(url, stream=True)
+        file_name = url.split("/")[-1]
+        
+        headers = {
+            "Authorization": f"Bearer {PIXELDRAIN_API_KEY}"
+        }
+        progress = 0
+        total_size = int(response.headers.get('content-length', 0))
 
-# Background worker to process queued jobs
-def job_worker():
-    while True:
-        with jobs_lock:
-            pending_jobs = [job for job in jobs if job['status'] == 'pending']
+        with open(f"temp_{job_id}_{file_name}", 'wb') as file:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    file.write(chunk)
+                    progress += len(chunk)
+                    # Update job progress in the job history
+                    update_job_progress(job_id, int((progress / total_size) * 100))
 
-        for job in pending_jobs:
-            try:
-                with jobs_lock:
-                    job['status'] = 'uploading'
+        # Upload the file to Pixeldrain after downloading
+        with open(f"temp_{job_id}_{file_name}", 'rb') as file:
+            upload_response = requests.post(PIXELDRAIN_UPLOAD_URL, headers=headers, files={'file': file})
+            if upload_response.status_code == 200:
+                job_result = upload_response.json()
+                job_url = job_result.get('link')
+                update_job_result(job_id, job_url)
+                os.remove(f"temp_{job_id}_{file_name}")
+            else:
+                update_job_error(job_id, "Upload failed.")
+    except Exception as e:
+        update_job_error(job_id, str(e))
 
-                link = upload_to_pixeldrain(job['url'])
-                with jobs_lock:
-                    job['status'] = 'complete'
-                    job['result'] = link
-            except Exception as e:
-                with jobs_lock:
-                    job['status'] = 'failed'
-                    job['error'] = str(e)
+# Update job status in history
+def update_job_status(job_id, status):
+    jobs = load_jobs()
+    for job in jobs:
+        if job['id'] == job_id:
+            job['status'] = status
+            save_jobs(jobs)
+            break
 
-        # Save the job history to the JSON file after every update
-        save_jobs_to_file(jobs)
+# Update job progress in history
+def update_job_progress(job_id, progress):
+    jobs = load_jobs()
+    for job in jobs:
+        if job['id'] == job_id:
+            job['progress'] = progress
+            save_jobs(jobs)
+            break
 
-        time.sleep(3)  # Polling interval
+# Update job result in history
+def update_job_result(job_id, result):
+    jobs = load_jobs()
+    for job in jobs:
+        if job['id'] == job_id:
+            job['result'] = result
+            job['status'] = 'completed'
+            save_jobs(jobs)
+            break
 
-# Start worker thread
-threading.Thread(target=job_worker, daemon=True).start()
+# Update job error in history
+def update_job_error(job_id, error):
+    jobs = load_jobs()
+    for job in jobs:
+        if job['id'] == job_id:
+            job['error'] = error
+            job['status'] = 'failed'
+            save_jobs(jobs)
+            break
 
-# Load job history into memory
-jobs = load_jobs_from_file()
-jobs_lock = threading.Lock()
-
-# Home route to show the form and job history
-@app.route('/', methods=['GET'])
+# Flask route for home page
+@app.route('/')
 def index():
-    with jobs_lock:
-        job_display = list(reversed(jobs))  # Newest first
+    jobs = load_jobs()
+    return render_template('index.html', jobs=jobs)
 
-    return render_template_string("""
-    <h2>Multi URL Uploader to Pixeldrain</h2>
-    <form method="POST" action="/submit">
-        <textarea name="urls" rows="5" cols="60" placeholder="Paste one URL per line" required></textarea><br>
-        <button type="submit">Upload</button>
-    </form>
-    <h3>Job History</h3>
-    <ul>
-        {% for job in jobs %}
-            <li>
-                <b>{{ job['url'] }}</b> - <i>{{ job['status'] }}</i>
-                {% if job.get('result') %} ➜ <a href="{{ job['result'] }}" target="_blank">Download</a>{% endif %}
-                {% if job.get('error') %} ⚠️ {{ job['error'] }}{% endif %}
-            </li>
-        {% endfor %}
-    </ul>
-    """, jobs=job_display)
-
-# Submit route to add jobs to the queue
+# Flask route to submit new jobs
 @app.route('/submit', methods=['POST'])
 def submit():
-    urls_text = request.form.get('urls')
-    if not urls_text:
-        return "No URLs provided", 400
+    urls = request.form['urls'].splitlines()
+    jobs = load_jobs()
 
-    urls = [u.strip() for u in urls_text.strip().splitlines() if u.strip()]
-    with jobs_lock:
-        for url in urls:
-            job_id = str(uuid.uuid4())
-            jobs.append({
-                "id": job_id,
-                "url": url,
-                "status": "pending",
-                "result": None,
-                "error": None
-            })
+    # Add job entries and start processing
+    for url in urls:
+        job_id = str(len(jobs) + 1)
+        job = {
+            'id': job_id,
+            'url': url,
+            'status': 'queued',
+            'progress': 0,
+            'result': None,
+            'error': None
+        }
+        jobs.append(job)
+        save_jobs(jobs)
 
-    # Save the updated job history to the JSON file
-    save_jobs_to_file(jobs)
+        # Start a background thread for each upload
+        threading.Thread(target=upload_file_to_pixeldrain, args=(job_id, url)).start()
 
-    return f"Submitted {len(urls)} job(s). <a href='/'>Back</a>"
+    return render_template('index.html', jobs=jobs)
 
+# Flask route to get the status of a job
+@app.route('/job_status/<job_id>')
+def job_status(job_id):
+    jobs = load_jobs()
+    job = next((job for job in jobs if job['id'] == job_id), None)
+    if job:
+        return jsonify({
+            'status': job['status'],
+            'progress': job.get('progress', 0)
+        })
+    return jsonify({'status': 'not found', 'progress': 0})
+
+# Run Flask app
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
+    app.run(host='0.0.0.0', port=10000, debug=True)
