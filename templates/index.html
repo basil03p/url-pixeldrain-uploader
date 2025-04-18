@@ -1,35 +1,46 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>File Uploader</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <meta charset="UTF-8">
+    <title>Cloud Downloader</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 </head>
 <body>
-  <div class="container">
-    <h1>File Uploader</h1>
-    <p>Upload a file to be sent to PixelDrain</p>
+    <h1>🌩️ Cloud Downloader</h1>
 
-    <form action="/submit" method="POST">
-      <label for="url">File URL:</label>
-      <input type="url" id="url" name="url" placeholder="Enter URL" required><br><br>
+    <form action="{{ url_for('submit') }}" method="POST">
+        <label for="url">File URL</label>
+        <input type="url" name="url" id="url" placeholder="Enter file URL" required>
 
-      <label for="notify">Notify on long download?</label>
-      <input type="checkbox" id="notify" name="notify"><br><br>
+        <label for="email">Notification Email</label>
+        <input type="email" name="email" id="email" placeholder="Enter your email" required>
 
-      <button type="submit">Upload</button>
+        <button type="submit">Start Download</button>
     </form>
 
-    {% if status %}
-    <div class="status-message">
-      <h3>Status: {{ status }}</h3>
+    {% if download_history %}
+    <div class="history">
+        <h2>📜 Download History</h2>
+        <ul>
+            {% for item in download_history %}
+                <li class="{{ item.status }}">
+                    <strong>{{ item.url }}</strong><br>
+                    Status: {{ item.status | capitalize }}
+                    {% if item.file %}
+                        - Saved as: {{ item.file }}
+                    {% endif %}
+                    {% if item.error %}
+                        <br>Error: {{ item.error }}
+                    {% endif %}
+                </li>
+            {% endfor %}
+        </ul>
+        <form action="{{ url_for('reset') }}" method="POST" style="margin-top: 20px;">
+            <button type="submit">Clear History</button>
+        </form>
     </div>
     {% endif %}
 
-    <form action="/reset" method="POST">
-      <button type="submit">Reset Job History</button>
-    </form>
-  </div>
 </body>
 </html>

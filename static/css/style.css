@@ -1,91 +1,113 @@
-/* General Reset */
-* {
+/* Base Styling */
+body {
+    font-family: 'Segoe UI', sans-serif;
     margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }
-  
-  /* Body Styling */
-  body {
-    font-family: Arial, sans-serif;
-    background-color: #f4f4f9;
-    color: #333;
-    text-align: center;
-    padding: 20px;
-  }
-  
-  /* Container */
-  .container {
-    max-width: 600px;
-    margin: 0 auto;
-    background-color: #fff;
     padding: 30px;
-    border-radius: 10px;
+    background-color: #f4f4f4;
+    color: #333;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+h1 {
+    color: #2c3e50;
+    font-size: 2rem;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+form, .history {
+    background: #fff;
+    padding: 20px;
+    margin: 0 auto 30px;
+    border-radius: 12px;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-  }
-  
-  /* Header */
-  h1 {
-    font-size: 2em;
-    margin-bottom: 20px;
-  }
-  
-  /* Form Styling */
-  form {
-    margin-bottom: 20px;
-  }
-  
-  label {
-    font-size: 1em;
-    margin-bottom: 10px;
-    display: block;
-  }
-  
-  input[type="url"] {
+    max-width: 600px;
+    transition: background 0.3s ease;
+}
+
+input, button {
     width: 100%;
-    padding: 10px;
-    font-size: 1em;
-    margin-bottom: 15px;
+    padding: 14px;
+    margin: 10px 0;
     border: 1px solid #ccc;
-    border-radius: 5px;
-  }
-  
-  button {
-    background-color: #007bff;
-    color: #fff;
-    padding: 10px 20px;
-    font-size: 1em;
+    border-radius: 8px;
+    font-size: 16px;
+    transition: all 0.3s ease;
+}
+
+button {
+    background-color: #3498db;
+    color: white;
     border: none;
-    border-radius: 5px;
     cursor: pointer;
-  }
-  
-  button:hover {
-    background-color: #0056b3;
-  }
-  
-  /* Status Message */
-  .status-message {
-    margin-top: 20px;
-    padding: 10px;
-    background-color: #e0ffe0;
-    border: 1px solid #2d6a4f;
-    color: #2d6a4f;
-    border-radius: 5px;
-  }
-  
-  /* Reset Button Styling */
-  form button {
-    background-color: #dc3545;
-    color: #fff;
-    padding: 10px 20px;
-    font-size: 1em;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-  }
-  
-  form button:hover {
-    background-color: #c82333;
-  }
-  
+}
+
+button:hover {
+    background-color: #2980b9;
+    transform: scale(1.02);
+}
+
+li.success {
+    color: green;
+    font-weight: 500;
+}
+
+li.failed {
+    color: red;
+    font-weight: 500;
+}
+
+@media (max-width: 600px) {
+    body {
+        padding: 15px;
+    }
+
+    form, .history {
+        padding: 15px;
+        max-width: 100%;
+    }
+
+    input, button {
+        padding: 12px;
+        font-size: 15px;
+    }
+
+    h1 {
+        font-size: 1.5rem;
+    }
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+    body {
+        background-color: #121212;
+        color: #f0f0f0;
+    }
+
+    form, .history {
+        background-color: #1e1e1e;
+        color: #f0f0f0;
+    }
+
+    input, button {
+        background-color: #2c2c2c;
+        color: #f0f0f0;
+        border: 1px solid #444;
+    }
+
+    button {
+        background-color: #3c8dbc;
+    }
+
+    button:hover {
+        background-color: #5dade2;
+    }
+
+    li.success {
+        color: #3bd67c;
+    }
+
+    li.failed {
+        color: #ff4e4e;
+    }
+}
