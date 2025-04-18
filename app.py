@@ -6,10 +6,12 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for
 from mailjet_rest import Client
 from dotenv import load_dotenv
 
-# Load environment variables from .env
-load_dotenv()
 import secrets
 print(secrets.token_hex(24))
+# Load environment variables from .env
+
+load_dotenv()
+
 # Flask app setup
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'your_default_secret_key')
