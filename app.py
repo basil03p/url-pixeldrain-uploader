@@ -11,14 +11,14 @@ load_dotenv()
 
 # Flask app setup
 app = Flask(__name__)
-app.secret_key = 'your_secret_key'  # Replace with a secret key of your choice
+app.secret_key = 'your_secret_key'  # Replace with a secure secret
 
 # Mailjet API setup
-api_key = os.getenv('MAILJET_API_KEY')  # Replace with your Mailjet API Key in .env file
-api_secret = os.getenv('MAILJET_API_SECRET')  # Replace with your Mailjet API Secret in .env file
+api_key = os.getenv('MAILJET_API_KEY')
+api_secret = os.getenv('MAILJET_API_SECRET')
 mj = Client(auth=(api_key, api_secret), version='v3.1')
 
-# Global download history to keep track of download status and errors
+# Global download history
 download_history = []
 
 # Function to send email notification via Mailjet
@@ -27,13 +27,13 @@ def send_email(subject, message, recipient_email):
         'Messages': [
             {
                 "From": {
-                    "Email": "you@yourdomain.com",  # Replace with your sender email
-                    "Name": "Your Name"
+                    "Email": "you@yourdomain.com",  # Replace with a real email
+                    "Name": "Your App"
                 },
                 "To": [
                     {
                         "Email": recipient_email,
-                        "Name": "Recipient"
+                        "Name": "User"
                     }
                 ],
                 "Subject": subject,
@@ -45,10 +45,9 @@ def send_email(subject, message, recipient_email):
     result = mj.send.create(data=data)
     return result.status_code, result.json()
 
-# Function to download the file
+# Function to download file in a thread
 def download_file(url, file_name, email):
     try:
-        # Download the file
         response = requests.get(url, stream=True)
         total_size = int(response.headers.get('Content-Length', 0))
         downloaded_size = 0
@@ -60,57 +59,47 @@ def download_file(url, file_name, email):
                     file.write(chunk)
                     downloaded_size += len(chunk)
 
-                    # Calculate download progress
+                    # Progress tracking
                     progress = (downloaded_size / total_size) * 100
                     elapsed_time = time.time() - start_time
-                    estimated_time = (total_size - downloaded_size) / (downloaded_size / elapsed_time) if downloaded_size > 0 else 0
+                    estimated_time = (total_size - downloaded_size) / (downloaded_size / elapsed_time) if downloaded_size else 0
 
-                    # Notify progress
-                    print(f"Downloading... {int(progress)}% ETA: {int(estimated_time // 60)} min")
-
-                    # Notify user if download is taking too long
+                    # Notify on very long downloads
                     if estimated_time > 6000 and email:
-                        send_email("Long Download Alert", f"Your download of {file_name} is taking too long. ETA: {int(estimated_time // 60)} minutes.", email)
+                        send_email("Long Download Alert", f"Download of {file_name} is taking too long. ETA: {int(estimated_time // 60)} minutes.", email)
 
-        # Successful download
+        # Success
         download_history.append({'url': url, 'status': 'success', 'file': file_name})
-        print(f"Download completed: {file_name}")
         send_email("Download Complete", f"Your download of {file_name} has completed.", email)
     except Exception as e:
-        # On error, notify user
+        # Failure
         download_history.append({'url': url, 'status': 'failed', 'error': str(e)})
-        send_email("Download Failed", f"An error occurred while downloading {file_name}: {str(e)}", email)
-        print(f"Download failed: {e}")
+        send_email("Download Failed", f"Error while downloading {file_name}: {str(e)}", email)
 
-# Home page route
+# Routes
 @app.route('/')
 def index():
     return render_template('index.html', download_history=download_history)
 
-# Handle file download submission
 @app.route('/submit', methods=['POST'])
 def submit():
     url = request.form['url']
     email = request.form['email']
-
     if not url or not email:
         return jsonify({'error': 'URL and email are required.'}), 400
 
-    # Create a unique file name based on the URL and timestamp
     file_name = f"download_{int(time.time())}.mp4"
-    
-    # Start the download in a separate thread
     thread = threading.Thread(target=download_file, args=(url, file_name, email))
     thread.start()
-
     return redirect(url_for('index'))
 
-# Reset the job history
 @app.route('/reset', methods=['POST'])
 def reset():
     global download_history
     download_history = []
     return redirect(url_for('index'))
 
+# Run the app on Render
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
