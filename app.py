@@ -3,53 +3,35 @@ import time
 import threading
 import requests
 from flask import Flask, render_template, request, jsonify, redirect, url_for
-from mailjet_rest import Client
 from dotenv import load_dotenv
 
-import secrets
-print(secrets.token_hex(24))
-# Load environment variables from .env
-
+# Load environment variables from .env file
 load_dotenv()
 
 # Flask app setup
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'your_default_secret_key')
 
-# Mailjet API setup
-api_key = os.getenv('MAILJET_API_KEY')
-api_secret = os.getenv('MAILJET_API_SECRET')
-mj = Client(auth=(api_key, api_secret), version='v3.1')
+# Gofile API setup
+GOFILE_API_KEY = os.getenv('GOFILE_API_KEY')  # Your Gofile API Key from .env file
 
 # Download history
 download_history = []
 
-# Email sender
-SENDER_EMAIL = os.getenv('SENDER_EMAIL', 'you@yourdomain.com')
-SENDER_NAME = os.getenv('SENDER_NAME', 'Cloud Downloader')
-
-# Send email via Mailjet
-def send_email(subject, message, recipient_email):
-    data = {
-        'Messages': [
-            {
-                "From": {
-                    "Email": SENDER_EMAIL,
-                    "Name": SENDER_NAME
-                },
-                "To": [{"Email": recipient_email}],
-                "Subject": subject,
-                "TextPart": message,
-                "HTMLPart": f"<h3>{message}</h3>"
-            }
-        ]
+# Upload file to Gofile
+def upload_to_gofile(file_path):
+    url = 'https://api.gofile.io/uploadFile'
+    headers = {
+        'Authorization': f'Bearer {GOFILE_API_KEY}',
     }
-    try:
-        result = mj.send.create(data=data)
-        return result.status_code, result.json()
-    except Exception as e:
-        print(f"Email sending failed: {e}")
-        return 500, {'error': str(e)}
+    files = {'file': open(file_path, 'rb')}
+    response = requests.post(url, headers=headers, files=files)
+    
+    if response.status_code == 200:
+        response_data = response.json()
+        if response_data['status'] == 'ok':
+            return response_data['data']['downloadPage']
+    return None
 
 # Download handler
 def download_file(url, file_name, email):
@@ -70,20 +52,26 @@ def download_file(url, file_name, email):
                         speed = downloaded / elapsed
                         eta = (total_size - downloaded) / speed if speed > 0 else 0
 
-                        if eta > 6000:
-                            send_email(
-                                "⚠️ Long Download Alert",
-                                f"Your download of '{file_name}' is taking too long (ETA: {int(eta // 60)} min).",
-                                email
-                            )
-
-        download_history.append({'url': url, 'status': 'success', 'file': file_name})
-        send_email("✅ Download Complete", f"Your download of '{file_name}' has completed.", email)
+        # Upload the file to Gofile after download
+        download_link = upload_to_gofile(file_name)
+        if download_link:
+            download_history.append({
+                'url': url,
+                'status': 'success',
+                'file': file_name,
+                'gofile_link': download_link
+            })
+            print(f"Download completed: {file_name}")
+        else:
+            download_history.append({
+                'url': url,
+                'status': 'failed',
+                'error': 'Failed to upload to Gofile'
+            })
 
     except Exception as e:
         error_msg = str(e)
         download_history.append({'url': url, 'status': 'failed', 'error': error_msg})
-        send_email("❌ Download Failed", f"Failed to download from {url}\nError: {error_msg}", email)
 
 # Routes
 @app.route('/')

@@ -2,45 +2,70 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Cloud Downloader</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Downloader</title>
+    <link rel="stylesheet" href="static/styles.css">
 </head>
 <body>
-    <h1>🌩️ Cloud Downloader</h1>
+    <div class="container">
+        <header>
+            <h1>Cloud Downloader</h1>
+        </header>
 
-    <form action="{{ url_for('submit') }}" method="POST">
-        <label for="url">File URL</label>
-        <input type="url" name="url" id="url" placeholder="Enter file URL" required>
+        <main>
+            <section>
+                <h2>Download History</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>URL</th>
+                            <th>Status</th>
+                            <th>File</th>
+                            <th>Gofile Link</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in download_history %}
+                            <tr>
+                                <td>{{ record.url }}</td>
+                                <td>{{ record.status }}</td>
+                                <td>{{ record.file }}</td>
+                                <td>
+                                    {% if record.gofile_link %}
+                                        <a href="{{ record.gofile_link }}" target="_blank">Download Link</a>
+                                    {% else %}
+                                        N/A
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </section>
 
-        <label for="email">Notification Email</label>
-        <input type="email" name="email" id="email" placeholder="Enter your email" required>
+            <section>
+                <h2>Submit New Download</h2>
+                <form action="/submit" method="post">
+                    <div class="form-group">
+                        <label for="url">File URL:</label>
+                        <input type="text" id="url" name="url" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Your Email:</label>
+                        <input type="email" id="email" name="email" required>
+                    </div>
+                    <button type="submit" class="submit-btn">Download and Upload</button>
+                </form>
 
-        <button type="submit">Start Download</button>
-    </form>
+                <form action="/reset" method="post" class="reset-form">
+                    <button type="submit" class="reset-btn">Reset Download History</button>
+                </form>
+            </section>
+        </main>
 
-    {% if download_history %}
-    <div class="history">
-        <h2>📜 Download History</h2>
-        <ul>
-            {% for item in download_history %}
-                <li class="{{ item.status }}">
-                    <strong>{{ item.url }}</strong><br>
-                    Status: {{ item.status | capitalize }}
-                    {% if item.file %}
-                        - Saved as: {{ item.file }}
-                    {% endif %}
-                    {% if item.error %}
-                        <br>Error: {{ item.error }}
-                    {% endif %}
-                </li>
-            {% endfor %}
-        </ul>
-        <form action="{{ url_for('reset') }}" method="POST" style="margin-top: 20px;">
-            <button type="submit">Clear History</button>
-        </form>
+        <footer>
+            <p>&copy; 2025 Cloud Downloader. All rights reserved.</p>
+        </footer>
     </div>
-    {% endif %}
-
 </body>
 </html>
