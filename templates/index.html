@@ -1,52 +1,35 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>URL to PixelDrain Uploader</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>File Uploader</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <div class="container">
-        <h1>🎯 URL to PixelDrain Uploader</h1>
-        
-        <form action="/submit" method="post" class="url-form">
-            <input type="url" name="url" placeholder="Enter file URL..." required>
-            <button type="submit">Upload</button>
-        </form>
+  <div class="container">
+    <h1>File Uploader</h1>
+    <p>Upload a file to be sent to PixelDrain</p>
 
-        <form action="/reset" method="post" class="reset-form">
-            <button type="submit" class="reset-btn">🗑️ Reset Job History</button>
-        </form>
+    <form action="/submit" method="POST">
+      <label for="url">File URL:</label>
+      <input type="url" id="url" name="url" placeholder="Enter URL" required><br><br>
 
-        <h2>📜 Job History</h2>
-        <div class="job-list">
-            {% if jobs %}
-                {% for job in jobs %}
-                    <div class="job-card {% if 'failed' in job.status %}error{% elif 'success' in job.status %}success{% endif %}">
-                        <div class="job-url">
-                            <strong>URL:</strong> 
-                            <a href="{{ job.url }}" target="_blank">{{ job.url }}</a>
-                        </div>
-                        <div class="job-status">
-                            <strong>Status:</strong> {{ job.status }}
-                        </div>
-                        {% if job.link %}
-                            <div class="job-link">
-                                <strong>PixelDrain Link:</strong> 
-                                <a href="{{ job.link }}" target="_blank">{{ job.link }}</a>
-                            </div>
-                        {% endif %}
-                        {% if job.eta %}
-                            <div class="job-eta">
-                                <strong>ETA:</strong> {{ job.eta }}
-                            </div>
-                        {% endif %}
-                    </div>
-                {% endfor %}
-            {% else %}
-                <p>No jobs submitted yet.</p>
-            {% endif %}
-        </div>
+      <label for="notify">Notify on long download?</label>
+      <input type="checkbox" id="notify" name="notify"><br><br>
+
+      <button type="submit">Upload</button>
+    </form>
+
+    {% if status %}
+    <div class="status-message">
+      <h3>Status: {{ status }}</h3>
     </div>
+    {% endif %}
+
+    <form action="/reset" method="POST">
+      <button type="submit">Reset Job History</button>
+    </form>
+  </div>
 </body>
 </html>

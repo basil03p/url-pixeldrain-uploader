@@ -1,117 +1,116 @@
 import os
+import time
 import threading
-import json
-import uuid
 import requests
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+from mailjet_rest import Client
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
+# Flask app setup
 app = Flask(__name__)
-JOBS_FILE = "jobs.json"
-UPLOAD_API = "https://api.pixeldrain.com/upload"
+app.secret_key = 'your_secret_key'  # Replace with a secret key of your choice
 
-# Ensure jobs.json exists and is valid
-if not os.path.exists(JOBS_FILE) or os.stat(JOBS_FILE).st_size == 0:
-    with open(JOBS_FILE, "w") as f:
-        json.dump([], f)
+# Mailjet API setup
+api_key = os.getenv('MAILJET_API_KEY')  # Replace with your Mailjet API Key in .env file
+api_secret = os.getenv('MAILJET_API_SECRET')  # Replace with your Mailjet API Secret in .env file
+mj = Client(auth=(api_key, api_secret), version='v3.1')
 
-jobs_lock = threading.Lock()
+# Global download history to keep track of download status and errors
+download_history = []
 
-def load_jobs():
-    with open(JOBS_FILE, "r") as file:
-        try:
-            return json.load(file)
-        except json.JSONDecodeError:
-            return []
-
-def save_jobs(jobs):
-    with open(JOBS_FILE, "w") as file:
-        json.dump(jobs, file, indent=4)
-
-def add_job(job):
-    with jobs_lock:
-        jobs = load_jobs()
-        jobs.append(job)
-        save_jobs(jobs)
-
-def update_job(job_id, updates):
-    with jobs_lock:
-        jobs = load_jobs()
-        for job in jobs:
-            if job["id"] == job_id:
-                job.update(updates)
-                break
-        save_jobs(jobs)
-
-def reset_jobs():
-    with jobs_lock:
-        save_jobs([])
-
-def download_file(url, temp_file_path):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+# Function to send email notification via Mailjet
+def send_email(subject, message, recipient_email):
+    data = {
+        'Messages': [
+            {
+                "From": {
+                    "Email": "you@yourdomain.com",  # Replace with your sender email
+                    "Name": "Your Name"
+                },
+                "To": [
+                    {
+                        "Email": recipient_email,
+                        "Name": "Recipient"
+                    }
+                ],
+                "Subject": subject,
+                "TextPart": message,
+                "HTMLPart": f"<h3>{message}</h3>"
+            }
+        ]
     }
-    with requests.get(url, headers=headers, stream=True, timeout=60) as r:
-        r.raise_for_status()
-        total_length = r.headers.get('content-length')
-        if total_length is None:
-            with open(temp_file_path, 'wb') as f:
-                f.write(r.content)
-            return
-        total_length = int(total_length)
-        downloaded = 0
-        with open(temp_file_path, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    percent = int((downloaded / total_length) * 100)
-                    print(f"Downloading... {percent}%")
+    result = mj.send.create(data=data)
+    return result.status_code, result.json()
 
-def upload_to_pixeldrain(file_path):
-    with open(file_path, 'rb') as f:
-        response = requests.put(UPLOAD_API, files={"file": f})
-        response.raise_for_status()
-        return response.json().get("id")
-
-def job_worker(job_id, url):
-    temp_file = f"temp_{uuid.uuid4().hex}.bin"
+# Function to download the file
+def download_file(url, file_name, email):
     try:
-        update_job(job_id, {"status": "downloading ⬇️"})
-        download_file(url, temp_file)
+        # Download the file
+        response = requests.get(url, stream=True)
+        total_size = int(response.headers.get('Content-Length', 0))
+        downloaded_size = 0
+        start_time = time.time()
 
-        update_job(job_id, {"status": "uploading ⬆️"})
-        file_id = upload_to_pixeldrain(temp_file)
+        with open(file_name, 'wb') as file:
+            for chunk in response.iter_content(chunk_size=1024):
+                if chunk:
+                    file.write(chunk)
+                    downloaded_size += len(chunk)
 
-        link = f"https://pixeldrain.com/u/{file_id}"
-        update_job(job_id, {"status": "completed ✅", "link": link})
+                    # Calculate download progress
+                    progress = (downloaded_size / total_size) * 100
+                    elapsed_time = time.time() - start_time
+                    estimated_time = (total_size - downloaded_size) / (downloaded_size / elapsed_time) if downloaded_size > 0 else 0
+
+                    # Notify progress
+                    print(f"Downloading... {int(progress)}% ETA: {int(estimated_time // 60)} min")
+
+                    # Notify user if download is taking too long
+                    if estimated_time > 6000 and email:
+                        send_email("Long Download Alert", f"Your download of {file_name} is taking too long. ETA: {int(estimated_time // 60)} minutes.", email)
+
+        # Successful download
+        download_history.append({'url': url, 'status': 'success', 'file': file_name})
+        print(f"Download completed: {file_name}")
+        send_email("Download Complete", f"Your download of {file_name} has completed.", email)
     except Exception as e:
-        update_job(job_id, {"status": f"failed ⚠️ {str(e)}"})
-    finally:
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
+        # On error, notify user
+        download_history.append({'url': url, 'status': 'failed', 'error': str(e)})
+        send_email("Download Failed", f"An error occurred while downloading {file_name}: {str(e)}", email)
+        print(f"Download failed: {e}")
 
-@app.route("/", methods=["GET"])
+# Home page route
+@app.route('/')
 def index():
-    jobs = load_jobs()
-    return render_template("index.html", jobs=jobs)
+    return render_template('index.html', download_history=download_history)
 
-@app.route("/submit", methods=["POST"])
+# Handle file download submission
+@app.route('/submit', methods=['POST'])
 def submit():
-    url = request.form["url"]
-    job_id = uuid.uuid4().hex
-    job = {"id": job_id, "url": url, "status": "queued 🕒", "link": ""}
-    add_job(job)
-    threading.Thread(target=job_worker, args=(job_id, url)).start()
-    return redirect(url_for("index"))
+    url = request.form['url']
+    email = request.form['email']
 
-@app.route("/reset", methods=["POST"])
+    if not url or not email:
+        return jsonify({'error': 'URL and email are required.'}), 400
+
+    # Create a unique file name based on the URL and timestamp
+    file_name = f"download_{int(time.time())}.mp4"
+    
+    # Start the download in a separate thread
+    thread = threading.Thread(target=download_file, args=(url, file_name, email))
+    thread.start()
+
+    return redirect(url_for('index'))
+
+# Reset the job history
+@app.route('/reset', methods=['POST'])
 def reset():
-    reset_jobs()
-    return redirect(url_for("index"))
+    global download_history
+    download_history = []
+    return redirect(url_for('index'))
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000, debug=True)
+if __name__ == '__main__':
+    app.run(debug=True)
