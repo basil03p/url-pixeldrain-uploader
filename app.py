@@ -1,99 +1,117 @@
 import os
-import json
 import threading
+import json
+import uuid
 import requests
 from flask import Flask, render_template, request, redirect, url_for
-from urllib.parse import urlparse
-from time import time
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
-
 JOBS_FILE = "jobs.json"
-UPLOAD_URL = "https://pixeldrain.com/api/file"
+UPLOAD_API = "https://api.pixeldrain.com/upload"
+
+# Ensure jobs.json exists and is valid
+if not os.path.exists(JOBS_FILE) or os.stat(JOBS_FILE).st_size == 0:
+    with open(JOBS_FILE, "w") as f:
+        json.dump([], f)
 
 jobs_lock = threading.Lock()
-active_jobs = []
 
-# Load jobs from file
 def load_jobs():
-    if not os.path.exists(JOBS_FILE):
-        return []
     with open(JOBS_FILE, "r") as file:
         try:
             return json.load(file)
         except json.JSONDecodeError:
             return []
 
-# Save jobs to file
 def save_jobs(jobs):
     with open(JOBS_FILE, "w") as file:
         json.dump(jobs, file, indent=4)
 
-# Background worker
-def job_worker():
-    while True:
-        if active_jobs:
-            job = active_jobs.pop(0)
-            url = job["url"]
-            filename = urlparse(url).path.split("/")[-1] or "file"
+def add_job(job):
+    with jobs_lock:
+        jobs = load_jobs()
+        jobs.append(job)
+        save_jobs(jobs)
 
-            try:
-                start = time()
-                with requests.get(url, stream=True, timeout=30) as r:
-                    r.raise_for_status()
-                    total = int(r.headers.get("Content-Length", 0))
-                    uploaded = 0
+def update_job(job_id, updates):
+    with jobs_lock:
+        jobs = load_jobs()
+        for job in jobs:
+            if job["id"] == job_id:
+                job.update(updates)
+                break
+        save_jobs(jobs)
 
-                    with requests.Session() as s:
-                        with s.post(UPLOAD_URL, files={"file": (filename, r.raw)}) as upload_response:
-                            upload_response.raise_for_status()
-                            res_json = upload_response.json()
-                            job["status"] = "success ✅"
-                            job["link"] = f"https://pixeldrain.com/u/{res_json['id']}"
+def reset_jobs():
+    with jobs_lock:
+        save_jobs([])
 
-                duration = time() - start
-                job["eta"] = f"{int(duration)}s"
+def download_file(url, temp_file_path):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+    with requests.get(url, headers=headers, stream=True, timeout=60) as r:
+        r.raise_for_status()
+        total_length = r.headers.get('content-length')
+        if total_length is None:
+            with open(temp_file_path, 'wb') as f:
+                f.write(r.content)
+            return
+        total_length = int(total_length)
+        downloaded = 0
+        with open(temp_file_path, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    percent = int((downloaded / total_length) * 100)
+                    print(f"Downloading... {percent}%")
 
-            except Exception as e:
-                job["status"] = f"failed ⚠️ {str(e)}"
-                job["link"] = ""
+def upload_to_pixeldrain(file_path):
+    with open(file_path, 'rb') as f:
+        response = requests.put(UPLOAD_API, files={"file": f})
+        response.raise_for_status()
+        return response.json().get("id")
 
-            with jobs_lock:
-                jobs = load_jobs()
-                jobs.insert(0, job)
-                save_jobs(jobs)
+def job_worker(job_id, url):
+    temp_file = f"temp_{uuid.uuid4().hex}.bin"
+    try:
+        update_job(job_id, {"status": "downloading ⬇️"})
+        download_file(url, temp_file)
 
-# Start background thread
-threading.Thread(target=job_worker, daemon=True).start()
+        update_job(job_id, {"status": "uploading ⬆️"})
+        file_id = upload_to_pixeldrain(temp_file)
+
+        link = f"https://pixeldrain.com/u/{file_id}"
+        update_job(job_id, {"status": "completed ✅", "link": link})
+    except Exception as e:
+        update_job(job_id, {"status": f"failed ⚠️ {str(e)}"})
+    finally:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
 
 @app.route("/", methods=["GET"])
 def index():
-    with jobs_lock:
-        jobs = load_jobs()
+    jobs = load_jobs()
     return render_template("index.html", jobs=jobs)
 
 @app.route("/submit", methods=["POST"])
 def submit():
-    url = request.form.get("url")
-    if url:
-        job = {
-            "url": url,
-            "status": "pending ⏳",
-            "link": "",
-            "eta": ""
-        }
-        active_jobs.append(job)
+    url = request.form["url"]
+    job_id = uuid.uuid4().hex
+    job = {"id": job_id, "url": url, "status": "queued 🕒", "link": ""}
+    add_job(job)
+    threading.Thread(target=job_worker, args=(job_id, url)).start()
     return redirect(url_for("index"))
 
 @app.route("/reset", methods=["POST"])
 def reset():
-    with jobs_lock:
-        save_jobs([])
+    reset_jobs()
     return redirect(url_for("index"))
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=10000, debug=True)
